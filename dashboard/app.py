@@ -36,15 +36,33 @@ FEAT_COLS = [
 ]
 
 
-@st.cache_resource
-def load_models():
-    models = {}
-    for name in ["moneyline", "method", "rounds", "props"]:
+def _models_signature() -> str:
+    """Cache-bust when .pkl files are added or updated on disk."""
+    parts = []
+    for name in ("moneyline", "method", "rounds", "props"):
         p = MODELS_DIR / f"{name}.pkl"
-        if p.exists():
+        if p.is_file():
+            stt = p.stat()
+            parts.append(f"{name}:{stt.st_size}:{int(stt.st_mtime)}")
+        else:
+            parts.append(f"{name}:missing")
+    return "|".join(parts)
+
+
+@st.cache_resource
+def load_models(signature: str):
+    models = {}
+    errors = []
+    for name in ("moneyline", "method", "rounds", "props"):
+        p = MODELS_DIR / f"{name}.pkl"
+        if not p.is_file():
+            continue
+        try:
             with open(p, "rb") as f:
                 models[name] = pickle.load(f)
-    return models
+        except Exception as e:
+            errors.append(f"{name}: {e}")
+    return models, errors
 
 
 @st.cache_data(ttl=120)
@@ -835,10 +853,19 @@ def main():
             + ". Push these files to GitHub (private repo is fine) and redeploy."
         )
 
-    models = load_models()
+    models, model_errors = load_models(_models_signature())
 
     if not models:
-        st.warning("Models not trained yet. Run `python models/moneyline.py` etc. after scraping completes.")
+        pkls = list(MODELS_DIR.glob("*.pkl"))
+        if model_errors:
+            st.warning("Model files found but failed to load:\n\n" + "\n".join(f"- {e}" for e in model_errors))
+        elif pkls:
+            st.warning(
+                "Models did not load (cached empty state). Click **Refresh** above or reboot the app "
+                "from Streamlit Cloud settings."
+            )
+        else:
+            st.warning("Models not trained yet. Run `python models/moneyline.py` etc. after scraping completes.")
 
     tab1, tab2, tab3, tab4 = st.tabs(["Next Event", "Backtest Results", "Past Cards", "Fighter Lookup"])
 
