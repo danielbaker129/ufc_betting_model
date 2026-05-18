@@ -1,0 +1,41 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "UFC Dashboard",
+      "runtimeExecutable": "venv/bin/streamlit",
+      "runtimeArgs": ["run", "dashboard/app.py", "--server.port", "8501", "--server.headless", "true"],
+      "port": 8501
+    },
+    {
+      "name": "Full Pipeline (ELO → Features → Train → Backtest)",
+      "runtimeExecutable": "venv/bin/python",
+      "runtimeArgs": ["pipeline/run_pipeline.py"],
+      "port": null
+    },
+    {
+      "name": "UFC Stats Scraper (fast)",
+      "runtimeExecutable": "venv/bin/python",
+      "runtimeArgs": ["scrapers/ufcstats_fast.py"],
+      "port": null
+    },
+    {
+      "name": "BestFightOdds Scraper (DK/FD supplement)",
+      "runtimeExecutable": "venv/bin/python",
+      "runtimeArgs": ["scrapers/bestfightodds.py"],
+      "port": null
+    },
+    {
+      "name": "FightOdds.io Scraper (DK/FD historical)",
+      "runtimeExecutable": "venv/bin/python",
+      "runtimeArgs": ["scrapers/fightodds.py"],
+      "port": null
+    },
+    {
+      "name": "Capture Closing Lines (run before each event)",
+      "runtimeExecutable": "venv/bin/python",
+      "runtimeArgs": ["scrapers/capture_closing_lines.py"],
+      "port": null
+    }
+  ]
+}
