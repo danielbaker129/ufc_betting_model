@@ -25,7 +25,7 @@ def evaluate_fight(
 
     Always returns edge_a, edge_b, model_edge for display on all fights.
     """
-    from pipeline.config import MIN_EDGE, KELLY_FRAC, MAX_UNITS
+    from pipeline.config import MIN_EDGE, MAX_EDGE, KELLY_FRAC, MAX_UNITS
 
     nv_a, nv_b = no_vig_probs(odds_a, odds_b)
     edge_a = prob_a - nv_a
@@ -54,9 +54,9 @@ def evaluate_fight(
     agrees     = model_pick == market_pick
     threshold  = MIN_EDGE if agrees else MIN_EDGE * 2  # 6% consensus, 12% contrarian
 
-    if model_pick == "a" and edge_a >= threshold:
+    if model_pick == "a" and threshold <= edge_a <= MAX_EDGE:
         bet_side, edge, prob, odds = "a", edge_a, prob_a, odds_a
-    elif model_pick == "b" and edge_b >= threshold:
+    elif model_pick == "b" and threshold <= edge_b <= MAX_EDGE:
         bet_side, edge, prob, odds = "b", edge_b, prob_b, odds_b
     else:
         return base
