@@ -44,8 +44,6 @@ FEATURE_COLS = [
     "is_title_fight", "is_5_round",
     "both_orthodox", "a_southpaw_vs_orthodox", "b_southpaw_vs_orthodox",
     # Market prior — 0.5 for pre-2022 fights (no data), real DK/FD no-vig for 2022+.
-    # Partial coverage means the model learns stats patterns from historical data
-    # but still uses the market signal for recent fights where it matters most.
     "market_nv_a",
 ]
 
@@ -108,7 +106,7 @@ def train():
     base_model = lgb.LGBMClassifier(**best, verbosity=-1)
     base_model.fit(X_train, y_train)
 
-    print("Calibrating probabilities (isotonic, 5-fold on train set)...")
+    print("Calibrating probabilities (isotonic, 5-fold CV on training set)...")
     model = CalibratedClassifierCV(base_model, method="isotonic", cv=5)
     model.fit(X_train, y_train)
 

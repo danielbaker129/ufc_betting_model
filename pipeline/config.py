@@ -38,6 +38,7 @@ USER_AGENT    = os.getenv("USER_AGENT", "Mozilla/5.0 (Macintosh; Intel Mac OS X 
 
 TRAIN_CUTOFF  = "2024-01-01"
 MIN_EDGE      = 0.06    # only bet when model has ≥6% edge over no-vig DK/FD line
+MAX_EDGE      = 0.15    # discard bets above 15% — edge inversion: model overconfident here
 KELLY_FRAC    = 0.15    # 15% fractional Kelly — conservative sizing
 MAX_UNITS     = 5.0     # hard cap 5u ($50) per fight
 STARTING_BANK = 1000.0

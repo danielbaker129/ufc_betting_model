@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "UFC Dashboard",
-      "runtimeExecutable": "venv/bin/streamlit",
-      "runtimeArgs": ["run", "dashboard/app.py", "--server.port", "8501", "--server.headless", "true"],
+      "runtimeExecutable": "/Users/danielbaker/model/venv/bin/streamlit",
+      "runtimeArgs": ["run", "/Users/danielbaker/model/dashboard/app.py", "--server.port", "8501", "--server.headless", "true"],
       "port": 8501
     },
     {
