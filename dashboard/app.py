@@ -97,6 +97,13 @@ def get_db():
     return sqlite3.connect(DB_PATH)
 
 
+def _db_signature() -> str:
+    if not db_available():
+        return "missing"
+    stt = DB_PATH.stat()
+    return f"{stt.st_size}:{int(stt.st_mtime)}"
+
+
 def deployment_missing() -> list[str]:
     missing = []
     if not db_available():
@@ -188,7 +195,7 @@ def tab_next_event(models):
         best_book_b = fight.get("best_book_b", "—")
 
         feats = lookup_features(fa, fb, fight_date=date)
-        pred  = predict_fight(feats, models) if feats else {}
+        pred  = predict_fight(feats, models) if (feats and models) else {}
 
         nv_a, nv_b = no_vig_probs(odds_a, odds_b)
         prob_a = pred.get("prob_a", nv_a)
@@ -283,9 +290,9 @@ def tab_next_event(models):
 
 
 @st.cache_data(ttl=3600)
-def _load_pipeline_data():
+def _load_pipeline_data(db_signature: str):
     """Load fights, stats, elo once per hour — shared across all upcoming fight lookups."""
-    if not db_available():
+    if db_signature == "missing" or not db_available():
         return None, None, None
     from pipeline.features import load_fights, load_stats, load_elo
     con = get_db()
@@ -325,7 +332,7 @@ def lookup_features(fighter_a: str, fighter_b: str, _feat_df=None,
     from datetime import datetime as _dt
 
     today = fight_date or _dt.today().strftime("%Y-%m-%d")
-    fights, stats, elo = _load_pipeline_data()
+    fights, stats, elo = _load_pipeline_data(_db_signature())
     if fights is None:
         return {}
 
