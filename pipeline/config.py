@@ -5,8 +5,24 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).parent.parent
 load_dotenv(ROOT / ".env")
 
-ODDS_API_KEY   = os.environ["ODDS_API_KEY"]
-API_SPORTS_KEY = os.environ["API_SPORTS_KEY"]
+
+def _secret(name: str, default: str = "") -> str:
+    """Local .env, then Streamlit Cloud secrets, then process env."""
+    val = os.getenv(name)
+    if val:
+        return val
+    try:
+        import streamlit as st
+
+        if name in st.secrets:
+            return str(st.secrets[name])
+    except Exception:
+        pass
+    return default
+
+
+ODDS_API_KEY   = _secret("ODDS_API_KEY")
+API_SPORTS_KEY = _secret("API_SPORTS_KEY")
 
 DB_PATH        = ROOT / os.getenv("DB_PATH", "data/ufc.db")
 DATA_DIR       = ROOT / "data"
