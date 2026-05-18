@@ -5,11 +5,14 @@ __pycache__/
 *.pyo
 *.pyd
 data/raw/
-data/processed/
+data/processed/*
+!data/processed/backtest_results.csv
 *.db
+!data/ufc.db
 *.db-shm
 *.db-wal
 *.pkl
+!models/*.pkl
 *.joblib
 .DS_Store
 .claude/settings.local.json

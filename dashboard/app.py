@@ -55,8 +55,39 @@ def load_backtest():
     return pd.DataFrame()
 
 
+def db_available() -> bool:
+    """True only when the scraped UFC database is present (not an empty stub)."""
+    if not DB_PATH.is_file() or DB_PATH.stat().st_size < 10_000:
+        return False
+    try:
+        con = sqlite3.connect(DB_PATH)
+        ok = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fights'"
+        ).fetchone() is not None
+        con.close()
+        return ok
+    except sqlite3.Error:
+        return False
+
+
 def get_db():
+    if not db_available():
+        raise FileNotFoundError(
+            f"Database not found at {DB_PATH}. "
+            "Scrape locally or include data/ufc.db in the GitHub repo for Cloud deploy."
+        )
     return sqlite3.connect(DB_PATH)
+
+
+def deployment_missing() -> list[str]:
+    missing = []
+    if not db_available():
+        missing.append("`data/ufc.db`")
+    if not any((MODELS_DIR / f"{n}.pkl").exists() for n in ("moneyline", "method", "rounds", "props")):
+        missing.append("`models/*.pkl`")
+    if not (PROCESSED_DIR / "backtest_results.csv").is_file():
+        missing.append("`data/processed/backtest_results.csv`")
+    return missing
 
 
 def predict_fight(features: dict, models: dict) -> dict:
@@ -236,13 +267,17 @@ def tab_next_event(models):
 @st.cache_data(ttl=3600)
 def _load_pipeline_data():
     """Load fights, stats, elo once per hour — shared across all upcoming fight lookups."""
+    if not db_available():
+        return None, None, None
     from pipeline.features import load_fights, load_stats, load_elo
     con = get_db()
-    fights = load_fights(con)
-    stats  = load_stats(con)
-    elo    = load_elo(con)
-    con.close()
-    return fights, stats, elo
+    try:
+        fights = load_fights(con)
+        stats  = load_stats(con)
+        elo    = load_elo(con)
+        return fights, stats, elo
+    finally:
+        con.close()
 
 
 def _find_fighter_id(name: str, fights_df: pd.DataFrame) -> str | None:
@@ -273,6 +308,8 @@ def lookup_features(fighter_a: str, fighter_b: str, _feat_df=None,
 
     today = fight_date or _dt.today().strftime("%Y-%m-%d")
     fights, stats, elo = _load_pipeline_data()
+    if fights is None:
+        return {}
 
     fa_id = _find_fighter_id(fighter_a, fights)
     fb_id = _find_fighter_id(fighter_b, fights)
@@ -514,6 +551,9 @@ def tab_backtest():
 
 def tab_fighter_lookup():
     st.header("Fighter Lookup")
+    if not db_available():
+        st.warning("Fighter lookup requires `data/ufc.db` on the server.")
+        return
     query = st.text_input("Search fighter name")
 
     if not query:
@@ -786,6 +826,14 @@ def main():
             st.cache_data.clear()
             st.cache_resource.clear()
             st.rerun()
+
+    missing = deployment_missing()
+    if missing:
+        st.error(
+            "Deploy data missing on this server: "
+            + ", ".join(missing)
+            + ". Push these files to GitHub (private repo is fine) and redeploy."
+        )
 
     models = load_models()
 
