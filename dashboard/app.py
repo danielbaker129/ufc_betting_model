@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from pipeline.config import DB_PATH, PROCESSED_DIR, MODELS_DIR, MIN_EDGE, KELLY_FRAC, MAX_UNITS
+from pipeline.config import DB_PATH, PROCESSED_DIR, MODELS_DIR, MIN_EDGE, MAX_EDGE, KELLY_FRAC, MAX_UNITS
 from betting.devig import no_vig_probs, devig_shin
 from betting.kelly import bet_summary, to_decimal, kelly_units
 from betting.edge import evaluate_fight
@@ -286,6 +286,15 @@ def tab_next_event(models):
                 df_card.style.apply(style_next_event, axis=1),
                 use_container_width=True,
                 hide_index=True,
+                column_config={
+                    "Fighter A": st.column_config.TextColumn("Fighter A", width="medium"),
+                    "Fighter B": st.column_config.TextColumn("Fighter B", width="medium"),
+                    "Play":      st.column_config.TextColumn("Play",      width="medium"),
+                    "DK A":  st.column_config.TextColumn("DK A",  width="small"),
+                    "FD A":  st.column_config.TextColumn("FD A",  width="small"),
+                    "DK B":  st.column_config.TextColumn("DK B",  width="small"),
+                    "FD B":  st.column_config.TextColumn("FD B",  width="small"),
+                },
             )
 
 
@@ -456,7 +465,7 @@ UNIT_SIZE = 10.0  # $10 per unit
 
 def tab_backtest():
     st.header("Backtest Results — Recommended Plays Only")
-    st.caption(f"1 unit = $10 · {int(KELLY_FRAC*100)}% fractional Kelly · Max {int(MAX_UNITS)}u/fight · DK/FD closing lines only · ≥{int(MIN_EDGE*100)}% edge threshold")
+    st.caption(f"1 unit = $10 · {int(KELLY_FRAC*100)}% fractional Kelly · Max {int(MAX_UNITS)}u/fight · DK/FD closing lines only · {int(MIN_EDGE*100)}–{int(MAX_EDGE*100)}% edge window")
     df = load_backtest()
 
     if df.empty:
@@ -523,6 +532,42 @@ def tab_backtest():
                       text=yearly["roi"].map(lambda r: f"{r*100:.1f}%"))
         fig2.update_traces(textposition="outside")
         st.plotly_chart(fig2, use_container_width=True)
+
+    # ── Edge bucket breakdown ────────────────────────────────────────────────
+    if "edge" in bet_df.columns:
+        _b = bet_df.copy()
+        _b["edge_bucket"] = pd.cut(
+            _b["edge"],
+            bins=[0.05, 0.10, 0.15, 0.20, 0.30, 1.0],
+            labels=["5–10%", "10–15%", "15–20%", "20–30%", "30%+"],
+        )
+        bucket = (
+            _b.groupby("edge_bucket", observed=True)
+            .agg(Bets=("bet", "count"), Wins=("won", "sum"), PnL_u=("pnl_units", "sum"))
+            .reset_index()
+        )
+        bucket["Win Rate"] = (bucket["Wins"] / bucket["Bets"]).map(lambda v: f"{v*100:.1f}%")
+        bucket["P&L (u)"]  = bucket["PnL_u"].map(lambda v: f"{v:+.1f}u")
+        bucket = bucket.rename(columns={"edge_bucket": "Edge"}).drop(columns=["PnL_u"])
+        st.subheader("Performance by Edge Bucket")
+        st.dataframe(bucket[["Edge", "Bets", "Wins", "Win Rate", "P&L (u)"]],
+                     use_container_width=True, hide_index=True)
+
+    # ── Monthly P&L bar chart ────────────────────────────────────────────────
+    if "date" in bet_df.columns and "pnl_units" in bet_df.columns:
+        _m = bet_df.copy()
+        _m["month"] = pd.to_datetime(_m["date"]).dt.to_period("M").astype(str)
+        monthly = _m.groupby("month").agg(pnl=("pnl_units", "sum")).reset_index()
+        monthly["color"] = monthly["pnl"].apply(lambda v: "green" if v >= 0 else "red")
+        fig3 = px.bar(
+            monthly, x="month", y="pnl",
+            title="Monthly P&L (units)",
+            labels={"pnl": "Units P&L", "month": "Month"},
+            color="color",
+            color_discrete_map={"green": "#00c853", "red": "#ff5252"},
+        )
+        fig3.update_layout(showlegend=False)
+        st.plotly_chart(fig3, use_container_width=True)
 
     # Derive odds for the side that was bet on
     if "odds_a" in bet_df.columns and "odds_b" in bet_df.columns and "bet_on" in bet_df.columns:

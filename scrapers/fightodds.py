@@ -9,6 +9,7 @@ import re
 import sqlite3
 import sys
 import time
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 
@@ -100,11 +101,50 @@ EVENT_QUERY = """
 
 
 def normalize(name: str) -> str:
-    return re.sub(r"[^a-z]", "", name.lower())
+    # Decompose unicode (é→e, ã→a, etc.) then strip non-ascii-alpha
+    nfkd = unicodedata.normalize("NFKD", name)
+    ascii_only = nfkd.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z]", "", ascii_only.lower())
+
+
+def _last(name: str) -> str:
+    """Normalize the last word of a name (surname)."""
+    parts = name.strip().split()
+    return normalize(parts[-1]) if parts else ""
+
+
+# Known name aliases: fightodds name → DB name (normalized)
+_ALIASES = {
+    "teciatorres": "teciapennington",   # married name change
+    "patrickmix": "patchymix",          # "Patrick" is his real name, UFC uses "Patchy"
+}
+
+
+def _alias(n: str) -> str:
+    return _ALIASES.get(n, n)
+
+
+def _names_match(na: str, nb: str) -> bool:
+    """True if two normalized full names are close enough to be the same fighter."""
+    na, nb = _alias(na), _alias(nb)
+    if na == nb:
+        return True
+    # 6-char prefix overlap
+    if len(na) >= 4 and (na[:6] in nb or nb[:6] in na):
+        return True
+    # 5-char prefix: catches transliteration variants (Sergey/Sergei, Viacheslav/Viecheslav)
+    # and extra middle names (Ateba Abega Gautier / Ateba Gautier)
+    if len(na) >= 8 and len(nb) >= 8 and (na[:5] in nb or nb[:5] in na):
+        return True
+    # Sorted-chars: handles transpositions (Cyril/Ciryl) and reversed word order (Xiao Long/Long Xiao)
+    if len(na) >= 5 and len(nb) >= 5 and sorted(na) == sorted(nb):
+        return True
+    return False
 
 
 def find_fight_id(con, name_a: str, name_b: str, date_str: str):
     na, nb = normalize(name_a), normalize(name_b)
+    la, lb = _last(name_a), _last(name_b)
     if not na or not nb:
         return None, False
     rows = con.execute(
@@ -115,12 +155,23 @@ def find_fight_id(con, name_a: str, name_b: str, date_str: str):
            WHERE f.fight_date BETWEEN date(?, '-5 days') AND date(?, '+5 days')""",
         (date_str, date_str),
     ).fetchall()
+
+    # Pass 1: full-name match
     for fight_id, fn_a, fn_b in rows:
         nfa, nfb = normalize(fn_a), normalize(fn_b)
-        if (na[:6] in nfa or nfa[:6] in na) and (nb[:6] in nfb or nfb[:6] in nb):
+        if _names_match(na, nfa) and _names_match(nb, nfb):
             return fight_id, False
-        if (nb[:6] in nfa or nfa[:6] in nb) and (na[:6] in nfb or nfb[:6] in na):
+        if _names_match(nb, nfa) and _names_match(na, nfb):
             return fight_id, True
+
+    # Pass 2: last-name fallback — handles Dan/Daniel, Joe/Joseph, Jim/Jimmy, etc.
+    for fight_id, fn_a, fn_b in rows:
+        lfa, lfb = _last(fn_a), _last(fn_b)
+        if len(la) >= 4 and len(lb) >= 4 and la == lfa and lb == lfb:
+            return fight_id, False
+        if len(lb) >= 4 and len(la) >= 4 and lb == lfa and la == lfb:
+            return fight_id, True
+
     return None, False
 
 
