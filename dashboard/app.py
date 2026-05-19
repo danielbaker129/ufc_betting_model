@@ -195,9 +195,12 @@ def tab_next_event(models):
         best_book_b = fight.get("best_book_b", "—")
 
         feats = lookup_features(fa, fb, fight_date=date)
+        nv_a, nv_b = no_vig_probs(odds_a, odds_b)
+        # Inject real market no-vig prob — #1 model feature, was hardcoded to 0.5
+        if feats:
+            feats["market_nv_a"] = nv_a
         pred  = predict_fight(feats, models) if (feats and models) else {}
 
-        nv_a, nv_b = no_vig_probs(odds_a, odds_b)
         prob_a = pred.get("prob_a", nv_a)
         prob_b = pred.get("prob_b", nv_b)
         method = pred.get("method", {})
@@ -394,6 +397,8 @@ def lookup_features(fighter_a: str, fighter_b: str, _feat_df=None,
         "slpm_career_diff":       fa_s["slpm_career"] - fb_s["slpm_career"],
         "slpm_L5_diff":           fa_s["slpm_L5"] - fb_s["slpm_L5"],
         "slpm_L3_diff":           fa_s["slpm_L3"] - fb_s["slpm_L3"],
+        "str_acc_L5_diff":        fa_s["str_acc_L5"] - fb_s["str_acc_L5"],
+        "td_avg_L5_diff":         fa_s["td_avg_L5"] - fb_s["td_avg_L5"],
         "sapm_diff":              fa_sapm - fb_sapm,
         "net_strike_diff":        (fa_s["slpm_career"] - fa_sapm) - (fb_s["slpm_career"] - fb_sapm),
         "str_acc_career_diff":    fa_s["str_acc_career"] - fb_s["str_acc_career"],
