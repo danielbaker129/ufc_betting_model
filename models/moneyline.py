@@ -31,7 +31,7 @@ FEATURE_COLS = [
     "td_acc_career_diff", "td_def_diff", "sub_avg_diff",
     "ko_finish_rate_diff", "sub_finish_rate_diff", "ko_susceptibility_diff",
     "avg_fight_secs_diff", "experience_diff", "win_streak_diff",
-    "elo_diff", "reach_diff", "height_diff", "age_diff",
+    "elo_diff", "avg_opp_elo_diff", "reach_diff", "height_diff", "age_diff",
     "days_since_last_a", "days_since_last_b",
     # Recent form (lambda=0.65 — last 3 fights dominate)
     "slpm_recent_diff", "str_acc_recent_diff", "td_avg_recent_diff",
@@ -43,7 +43,11 @@ FEATURE_COLS = [
     # Contextual
     "is_title_fight", "is_5_round",
     "both_orthodox", "a_southpaw_vs_orthodox", "b_southpaw_vs_orthodox",
-    # Market prior — 0.5 for pre-2022 fights (no data), real DK/FD no-vig for 2022+.
+    # Per-round / style features
+    "ctrl_per_min_diff", "kd_rate_diff",
+    "head_str_pct_diff", "leg_str_pct_diff",
+    "fade_rate_diff", "late_ctrl_per_min_diff",
+    # Market prior — 0.5 for pre-2022 fights (no data), real DK/FD opening no-vig for 2022+.
     "market_nv_a",
 ]
 
@@ -51,9 +55,27 @@ FEATURE_COLS = [
 def load_data():
     path = PROCESSED_DIR / "feature_matrix.csv"
     df = pd.read_csv(path, parse_dates=["fight_date"])
-    df = df.dropna(subset=["target"])          # only require the label
-    df[FEATURE_COLS] = df[FEATURE_COLS].fillna(0.0)   # 0 = neutral for differentials
-    return df
+    df = df.dropna(subset=["target"])
+    df[FEATURE_COLS] = df[FEATURE_COLS].fillna(0.0)
+
+    # Augment with flipped rows: every fight appears as (A,B) and (B,A).
+    # This removes the red-corner positional prior — fighter_a won 64% of historical
+    # fights, so training on one ordering teaches the model "being fighter_a is good".
+    # Doubling with the mirror eliminates that label noise.
+    diff_cols = [c for c in FEATURE_COLS if c.endswith("_diff")]
+    a_cols    = {c: c[:-2] + "_b" for c in FEATURE_COLS
+                 if c.endswith("_a") and (c[:-2] + "_b") in FEATURE_COLS}
+
+    flipped = df.copy()
+    for col in diff_cols:
+        flipped[col] = -flipped[col]
+    for a_col, b_col in a_cols.items():
+        flipped[a_col], flipped[b_col] = df[b_col].copy(), df[a_col].copy()
+    if "market_nv_a" in FEATURE_COLS:
+        flipped["market_nv_a"] = 1.0 - df["market_nv_a"]
+    flipped["target"] = 1 - df["target"]
+
+    return pd.concat([df, flipped], ignore_index=True).sort_values("fight_date")
 
 
 def train():

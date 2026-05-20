@@ -37,13 +37,13 @@ SCRAPE_DELAY  = float(os.getenv("SCRAPE_DELAY", "2.0"))
 USER_AGENT    = os.getenv("USER_AGENT", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
 TRAIN_CUTOFF  = "2024-01-01"
-MIN_EDGE      = 0.06    # only bet when model has ≥6% edge over no-vig DK/FD line
-MAX_EDGE      = 0.30    # cap at 30% — model well-calibrated up to here; 35%+ slightly overestimates
+MIN_EDGE      = 0.08    # only bet when model has ≥8% edge over no-vig DK/FD line
+MAX_EDGE      = 0.18    # cap at 18% — above this the model fights the market and loses
 KELLY_FRAC    = 0.15    # 15% fractional Kelly — conservative sizing
 MAX_UNITS     = 5.0     # hard cap 5u ($50) per fight
 STARTING_BANK = 1000.0
 ELO_START     = 1500.0
-ELO_K_EARLY   = 170.0
-ELO_K_LATE    = 85.0
+ELO_K_EARLY   = 60.0   # reduced from 170 — high K caused excessive rating swings for new fighters
+ELO_K_LATE    = 30.0   # reduced from 85 — standard sport ELO range is 20–40 for established players
 ELO_K_CUTOFF  = 5
 DECAY_LAMBDA  = 0.85

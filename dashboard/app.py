@@ -115,7 +115,33 @@ def deployment_missing() -> list[str]:
     return missing
 
 
+def _flip_features(features: dict) -> dict:
+    """Return a copy of features with A and B sides swapped.
+
+    The model was trained with fighter_a = UFC red corner, who wins 64% of fights.
+    For upcoming fights the Odds API assigns fighter_a arbitrarily, so we average
+    both orderings to cancel the positional prior.
+    """
+    flipped = {}
+    for k, v in features.items():
+        if k.endswith("_diff"):
+            flipped[k] = -v
+        elif k.endswith("_a"):
+            flipped[k[:-2] + "_b"] = v
+        elif k.endswith("_b"):
+            flipped[k[:-2] + "_a"] = v
+        else:
+            flipped[k] = v
+    # market_nv_a in the flipped view = market prob for the original fighter_b
+    if "market_nv_a" in features:
+        flipped["market_nv_a"] = 1.0 - features["market_nv_a"]
+    return flipped
+
+
 def predict_fight(features: dict, models: dict) -> dict:
+    # Missing feature keys default to 0.0 — for differential features this means
+    # "no difference", which matches how the model was trained (0.5 for market_nv_a
+    # when odds unavailable, 0 for stats on fighters with no fight history).
     result = {}
     X = np.array([[features.get(c, 0.0) for c in FEAT_COLS]])
 
@@ -303,18 +329,38 @@ def tab_next_event(models):
 
 @st.cache_data(ttl=3600)
 def _load_pipeline_data(db_signature: str):
-    """Load fights, stats, elo once per hour — shared across all upcoming fight lookups."""
+    """Load fights, stats, elo and build O(1) lookup structures — cached per DB snapshot."""
     if db_signature == "missing" or not db_available():
-        return None, None, None
+        return None, None, None, None, None, None
     from pipeline.features import load_fights, load_stats, load_elo
+    from collections import defaultdict
     con = get_db()
     try:
         fights = load_fights(con)
         stats  = load_stats(con)
         elo    = load_elo(con)
-        return fights, stats, elo
     finally:
         con.close()
+
+    # Build once, reuse for every lookup_features call this session.
+    fighter_fights_map: dict = defaultdict(list)
+    for _, row in fights.iterrows():
+        frow = row.to_dict()
+        fighter_fights_map[row["fighter_a_id"]].append(frow)
+        fighter_fights_map[row["fighter_b_id"]].append(frow)
+    for fid in fighter_fights_map:
+        fighter_fights_map[fid].sort(key=lambda r: r["fight_date"])
+
+    stats_lookup: dict = {
+        (r["fight_id"], r["fighter_id"]): r.to_dict()
+        for _, r in stats.iterrows()
+    }
+    elo_map: dict = {
+        (r["fighter_id"], r["fight_id"]): r["elo_before"]
+        for _, r in elo.iterrows()
+    }
+
+    return fights, stats, elo, fighter_fights_map, stats_lookup, elo_map
 
 
 def _find_fighter_id(name: str, fights_df: pd.DataFrame) -> str | None:
@@ -339,12 +385,13 @@ def lookup_features(fighter_a: str, fighter_b: str, _feat_df=None,
     they've met before.
     """
     from pipeline.features import (
-        compute_fighter_rolling_stats, compute_opponent_sapm, compute_td_defense
+        compute_fighter_rolling_stats, compute_opponent_sapm,
+        compute_td_defense, compute_avg_opp_elo,
     )
     from datetime import datetime as _dt
 
     today = fight_date or _dt.today().strftime("%Y-%m-%d")
-    fights, stats, elo = _load_pipeline_data(_db_signature())
+    fights, stats, elo, fighter_fights_map, stats_lookup, elo_map = _load_pipeline_data(_db_signature())
     if fights is None:
         return {}
 
@@ -353,18 +400,23 @@ def lookup_features(fighter_a: str, fighter_b: str, _feat_df=None,
     if not fa_id or not fb_id:
         return {}
 
-    fa_s  = compute_fighter_rolling_stats(fa_id, today, fights, stats)
-    fb_s  = compute_fighter_rolling_stats(fb_id, today, fights, stats)
-    fa_sapm   = compute_opponent_sapm(fa_id, today, fights, stats)
-    fb_sapm   = compute_opponent_sapm(fb_id, today, fights, stats)
-    fa_td_def = compute_td_defense(fa_id, today, fights, stats)
-    fb_td_def = compute_td_defense(fb_id, today, fights, stats)
+    fa_prior = [f for f in fighter_fights_map.get(fa_id, []) if f["fight_date"] < today]
+    fb_prior = [f for f in fighter_fights_map.get(fb_id, []) if f["fight_date"] < today]
 
-    # ELO — latest entry for each fighter
-    fa_elo = elo[elo["fighter_id"] == fa_id]["elo_before"].iloc[-1] if fa_id in elo["fighter_id"].values else 1500.0
-    fb_elo = elo[elo["fighter_id"] == fb_id]["elo_before"].iloc[-1] if fb_id in elo["fighter_id"].values else 1500.0
+    fa_s      = compute_fighter_rolling_stats(fa_id, today, fa_prior, stats_lookup)
+    fb_s      = compute_fighter_rolling_stats(fb_id, today, fb_prior, stats_lookup)
+    fa_sapm   = compute_opponent_sapm(fa_id, fa_prior, stats_lookup)
+    fb_sapm   = compute_opponent_sapm(fb_id, fb_prior, stats_lookup)
+    fa_td_def = compute_td_defense(fa_id, fa_prior, stats_lookup)
+    fb_td_def = compute_td_defense(fb_id, fb_prior, stats_lookup)
+    fa_opp_elo = compute_avg_opp_elo(fa_id, fa_prior, elo_map)
+    fb_opp_elo = compute_avg_opp_elo(fb_id, fb_prior, elo_map)
 
-    # Physical attributes from fighters table
+    # ELO — latest pre-fight snapshot for each fighter
+    fa_elo = elo_map.get((fa_id, fa_prior[-1]["fight_id"]), 1500.0) if fa_prior else 1500.0
+    fb_elo = elo_map.get((fb_id, fb_prior[-1]["fight_id"]), 1500.0) if fb_prior else 1500.0
+
+    # Physical attributes
     con = get_db()
     fa_row = pd.read_sql_query("SELECT height_inches, reach_inches, dob, stance FROM fighters WHERE fighter_id=?", con, params=(fa_id,))
     fb_row = pd.read_sql_query("SELECT height_inches, reach_inches, dob, stance FROM fighters WHERE fighter_id=?", con, params=(fb_id,))
@@ -389,9 +441,13 @@ def lookup_features(fighter_a: str, fighter_b: str, _feat_df=None,
     sa = stance_a or str(fa_phys.get("stance", "")).lower()
     sb = stance_b or str(fb_phys.get("stance", "")).lower()
 
-    def age_decline(age, trend):
-        if not age: return 0.0
-        return max(0.0, (age - 30) / 10.0) * min(trend, 0.0)
+    # Must match features.py: composite of slpm_trend + win_rate_trend
+    def age_decline(age, slpm_trend, win_rate_trend):
+        if not age:
+            return 0.0
+        age_factor = max(0.0, (age - 30) / 10.0)
+        composite  = (slpm_trend + win_rate_trend * 4.0) / 2.0
+        return age_factor * min(composite, 0.0)
 
     return {
         "slpm_career_diff":       fa_s["slpm_career"] - fb_s["slpm_career"],
@@ -402,9 +458,7 @@ def lookup_features(fighter_a: str, fighter_b: str, _feat_df=None,
         "sapm_diff":              fa_sapm - fb_sapm,
         "net_strike_diff":        (fa_s["slpm_career"] - fa_sapm) - (fb_s["slpm_career"] - fb_sapm),
         "str_acc_career_diff":    fa_s["str_acc_career"] - fb_s["str_acc_career"],
-        "str_acc_L5_diff":        fa_s["str_acc_L5"] - fb_s["str_acc_L5"],
         "td_avg_career_diff":     fa_s["td_avg_career"] - fb_s["td_avg_career"],
-        "td_avg_L5_diff":         fa_s["td_avg_L5"] - fb_s["td_avg_L5"],
         "td_acc_career_diff":     fa_s["td_acc_career"] - fb_s["td_acc_career"],
         "td_def_diff":            fa_td_def - fb_td_def,
         "sub_avg_diff":           fa_s["sub_avg_career"] - fb_s["sub_avg_career"],
@@ -415,6 +469,7 @@ def lookup_features(fighter_a: str, fighter_b: str, _feat_df=None,
         "experience_diff":        fa_s["n_fights"] - fb_s["n_fights"],
         "win_streak_diff":        fa_s["win_streak"] - fb_s["win_streak"],
         "elo_diff":               float(fa_elo) - float(fb_elo),
+        "avg_opp_elo_diff":       float(fa_opp_elo) - float(fb_opp_elo),
         "reach_diff":             float(reach_a or 0) - float(reach_b or 0),
         "height_diff":            float(height_a or 0) - float(height_b or 0),
         "age_diff":               ((age_a or 0) - (age_b or 0)) if age_a and age_b else 0.0,
@@ -425,7 +480,6 @@ def lookup_features(fighter_a: str, fighter_b: str, _feat_df=None,
         "both_orthodox":          int(sa == "orthodox" and sb == "orthodox"),
         "a_southpaw_vs_orthodox": int(sa == "southpaw" and sb == "orthodox"),
         "b_southpaw_vs_orthodox": int(sb == "southpaw" and sa == "orthodox"),
-        # New feature columns in model
         "slpm_recent_diff":       fa_s["slpm_recent"] - fb_s["slpm_recent"],
         "str_acc_recent_diff":    fa_s["str_acc_recent"] - fb_s["str_acc_recent"],
         "td_avg_recent_diff":     fa_s["td_avg_recent"] - fb_s["td_avg_recent"],
@@ -434,8 +488,16 @@ def lookup_features(fighter_a: str, fighter_b: str, _feat_df=None,
         "win_rate_trend_diff":    fa_s["win_rate_trend"] - fb_s["win_rate_trend"],
         "recent_win_rate_diff":   fa_s["recent_win_rate"] - fb_s["recent_win_rate"],
         "last_fight_won_diff":    fa_s["last_fight_won"] - fb_s["last_fight_won"],
-        "age_decline_diff":       age_decline(age_a, fa_s.get("slpm_trend", 0)) - age_decline(age_b, fb_s.get("slpm_trend", 0)),
-        "market_nv_a":            0.5,  # no market prior for upcoming fights
+        "age_decline_diff":       age_decline(age_a, fa_s.get("slpm_trend", 0.0), fa_s.get("win_rate_trend", 0.0))
+                                - age_decline(age_b, fb_s.get("slpm_trend", 0.0), fb_s.get("win_rate_trend", 0.0)),
+        # Per-round / style features
+        "ctrl_per_min_diff":      fa_s.get("ctrl_per_min", 0.0)      - fb_s.get("ctrl_per_min", 0.0),
+        "kd_rate_diff":           fa_s.get("kd_rate", 0.0)           - fb_s.get("kd_rate", 0.0),
+        "head_str_pct_diff":      fa_s.get("head_str_pct", 0.5)      - fb_s.get("head_str_pct", 0.5),
+        "leg_str_pct_diff":       fa_s.get("leg_str_pct", 0.15)      - fb_s.get("leg_str_pct", 0.15),
+        "fade_rate_diff":         fa_s.get("fade_rate", 0.0)         - fb_s.get("fade_rate", 0.0),
+        "late_ctrl_per_min_diff": fa_s.get("late_ctrl_per_min", 0.0) - fb_s.get("late_ctrl_per_min", 0.0),
+        "market_nv_a":            0.5,  # overwritten by caller with live no-vig prob
     }
 
 

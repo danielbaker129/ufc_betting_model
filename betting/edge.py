@@ -17,15 +17,17 @@ def evaluate_fight(
 
     Bet rules:
       Consensus bet  — model and market agree on winner, edge >= MIN_EDGE
-      Contrarian bet — model disagrees with market BUT model confidence >= 65%
+      Contrarian bet — model disagrees with market, model confidence >= 65%,
                        AND edge >= MIN_EDGE * 2 (double threshold, higher bar)
 
-    The double-threshold for contrarian bets filters out noise while still
-    capturing high-confidence calls like a 73% underdog at +116.
+    The 65% confidence floor + double edge threshold together filter noise while
+    still capturing high-confidence calls like a 73% underdog at +116.
 
     Always returns edge_a, edge_b, model_edge for display on all fights.
     """
     from pipeline.config import MIN_EDGE, MAX_EDGE, KELLY_FRAC, MAX_UNITS
+
+    CONTRARIAN_MIN_CONFIDENCE = 0.65
 
     nv_a, nv_b = no_vig_probs(odds_a, odds_b)
     edge_a = prob_a - nv_a
@@ -51,8 +53,13 @@ def evaluate_fight(
         "odds_taken":  None,
     }
 
-    agrees     = model_pick == market_pick
-    threshold  = MIN_EDGE if agrees else MIN_EDGE * 2  # 6% consensus, 12% contrarian
+    agrees    = model_pick == market_pick
+    threshold = MIN_EDGE if agrees else MIN_EDGE * 2  # 6% consensus, 12% contrarian
+    prob_pick = prob_a if model_pick == "a" else prob_b
+
+    # Contrarian bets require 65% model confidence — filters low-conviction disagreements
+    if not agrees and prob_pick < CONTRARIAN_MIN_CONFIDENCE:
+        return base
 
     if model_pick == "a" and threshold <= edge_a <= MAX_EDGE:
         bet_side, edge, prob, odds = "a", edge_a, prob_a, odds_a

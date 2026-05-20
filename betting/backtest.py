@@ -63,19 +63,29 @@ def run_backtest():
     )
     con.close()
 
-    def best_dk_fd_odds(row, side):
-        col = "a" if side == "a" else "b"
-        candidates = [row.get(f"dk_{col}"), row.get(f"fd_{col}")]
-        valid = [c for c in candidates if c is not None and not pd.isna(c) and abs(int(c)) < 5000]
-        if not valid:
-            return None
-        return max(int(c) for c in valid)
+    def best_book_line(row):
+        """Return (odds_a, odds_b) from one complete book line — DK preferred, FD fallback.
+
+        Must use a paired line from a single book. Independently picking the best A-side
+        from one book and best B-side from another creates a synthetic line that never
+        existed, producing impossible odds (both fighters as underdogs) and phantom edge.
+        """
+        def valid(o):
+            return o is not None and not pd.isna(o) and abs(int(o)) < 5000
+        dk_a, dk_b = row.get("dk_a"), row.get("dk_b")
+        if valid(dk_a) and valid(dk_b):
+            return int(dk_a), int(dk_b)
+        fd_a, fd_b = row.get("fd_a"), row.get("fd_b")
+        if valid(fd_a) and valid(fd_b):
+            return int(fd_a), int(fd_b)
+        return None, None
 
     merged = test_df.merge(odds_df, on="fight_id", how="left")
     merged = merged.merge(fights_meta, on="fight_id", how="left")
     merged = merged.merge(events_meta, on="event_id", how="left")
-    merged["fighter_a_odds"] = merged.apply(lambda r: best_dk_fd_odds(r, "a"), axis=1)
-    merged["fighter_b_odds"] = merged.apply(lambda r: best_dk_fd_odds(r, "b"), axis=1)
+    lines = merged.apply(best_book_line, axis=1)
+    merged["fighter_a_odds"] = lines.apply(lambda x: x[0])
+    merged["fighter_b_odds"] = lines.apply(lambda x: x[1])
     merged["has_real_odds"]  = merged["fighter_a_odds"].notna() & merged["fighter_b_odds"].notna()
 
     has_real = merged["has_real_odds"].sum()
