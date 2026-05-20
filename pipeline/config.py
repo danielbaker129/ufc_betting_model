@@ -36,9 +36,12 @@ for d in (DATA_DIR, RAW_DIR, PROCESSED_DIR, MODELS_DIR):
 SCRAPE_DELAY  = float(os.getenv("SCRAPE_DELAY", "2.0"))
 USER_AGENT    = os.getenv("USER_AGENT", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-TRAIN_CUTOFF  = "2024-01-01"
-MIN_EDGE      = 0.08    # only bet when model has ≥8% edge over no-vig DK/FD line
-MAX_EDGE      = 0.18    # cap at 18% — above this the model fights the market and loses
+TRAIN_CUTOFF       = "2022-01-01"   # model trains on pre-2022 only
+VALIDATION_CUTOFF  = "2024-01-01"   # 2022-2023 = validation (tune thresholds here)
+TEST_CUTOFF        = "2024-01-01"   # 2024+ = test set, run ONCE with locked params
+
+MIN_EDGE      = 0.11    # set by validation grid search on 2022-2023 (never saw test set)
+MAX_EDGE      = 0.30    # set by validation grid search on 2022-2023 (never saw test set)
 KELLY_FRAC    = 0.15    # 15% fractional Kelly — conservative sizing
 MAX_UNITS     = 5.0     # hard cap 5u ($50) per fight
 STARTING_BANK = 1000.0

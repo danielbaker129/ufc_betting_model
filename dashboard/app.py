@@ -259,7 +259,7 @@ def tab_next_event(models):
             "Method":     top_method,
             "Play":       play_side or "—",
             "Book":       play_book or "—",
-            "Edge":       f"{rec['model_edge']*100:+.1f}%",
+            "Edge":       f"{rec['edge']*100:+.1f}%" if rec["bet"] else f"{rec['model_edge']*100:+.1f}%",
             "Units":      f"{play_rec['units']:.1f}u" if play_rec and play_rec["units"] > 0 else "—",
             "Bet":        f"${play_rec['dollars']:.0f}" if play_rec and play_rec["dollars"] > 0 else "PASS",
             "_has_edge":  play_rec is not None,
